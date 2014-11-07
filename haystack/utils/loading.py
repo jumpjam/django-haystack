@@ -1,6 +1,5 @@
 import copy
 import inspect
-import threading
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.datastructures import SortedDict
@@ -30,21 +29,16 @@ def import_class(path):
 def load_backend(full_backend_path):
     """
     Loads a backend for interacting with the search engine.
-
     Requires a ``backend_path``. It should be a string resembling a Python
     import path, pointing to a ``BaseEngine`` subclass. The built-in options
     available include::
-
       * haystack.backends.solr.SolrEngine
       * haystack.backends.xapian.XapianEngine (third-party)
       * haystack.backends.whoosh.WhooshEngine
       * haystack.backends.simple.SimpleEngine
-
     If you've implemented a custom backend, you can provide the path to
     your backend & matching ``Engine`` class. For example::
-
       ``myapp.search_backends.CustomSolrEngine``
-
     """
     path_bits = full_backend_path.split('.')
 
@@ -57,18 +51,13 @@ def load_backend(full_backend_path):
 def load_router(full_router_path):
     """
     Loads a router for choosing which connection to use.
-
     Requires a ``full_router_path``. It should be a string resembling a Python
     import path, pointing to a ``BaseRouter`` subclass. The built-in options
     available include::
-
       * haystack.routers.DefaultRouter
-
     If you've implemented a custom backend, you can provide the path to
     your backend & matching ``Engine`` class. For example::
-
       ``myapp.search_routers.MasterSlaveRouter``
-
     """
     path_bits = full_router_path.split('.')
 
@@ -81,7 +70,7 @@ def load_router(full_router_path):
 class ConnectionHandler(object):
     def __init__(self, connections_info):
         self.connections_info = connections_info
-        self._local = threading.local()
+        self._connections = {}
         self._index = None
 
     def ensure_defaults(self, alias):
@@ -94,21 +83,16 @@ class ConnectionHandler(object):
             conn['ENGINE'] = 'haystack.backends.simple_backend.SimpleEngine'
 
     def __getitem__(self, key):
-        if not hasattr(self._local, '_connections'):
-            self._local.connections = {}
-        elif key in self._local.connections:
-            return self._local.connections[key]
+        if key in self._connections:
+            return self._connections[key]
 
         self.ensure_defaults(key)
-        self._local.connections[key] = load_backend(self.connections_info[key]['ENGINE'])(using=key)
-        return self._local.connections[key]
+        self._connections[key] = load_backend(self.connections_info[key]['ENGINE'])(using=key)
+        return self._connections[key]
 
     def reload(self, key):
-        if not hasattr(self._local, '_connections'):
-            self._local.connections = {}
-
         try:
-            del self._local.connections[key]
+            del self._connections[key]
         except KeyError:
             pass
 
@@ -164,6 +148,7 @@ class UnifiedIndex(object):
 
     def collect_indexes(self):
         indexes = []
+
         for app in settings.INSTALLED_APPS:
             mod = importlib.import_module(app)
 
@@ -185,6 +170,7 @@ class UnifiedIndex(object):
                         continue
 
                     indexes.append(item())
+
         return indexes
 
     def reset(self):
@@ -203,11 +189,9 @@ class UnifiedIndex(object):
         for index in indexes:
             model = index.get_model()
 
-            if model in self.indexes:
-                raise ImproperlyConfigured("Model '%s' has more than one 'SearchIndex`` handling it. Please exclude either '%s' or '%s' using the 'HAYSTACK_EXCLUDED_INDEXES' setting." % (model, self.indexes[model], index))
-
-            self.indexes[model] = index
-            self.collect_fields(index)
+            if model not in self.indexes:
+                self.indexes[model] = index
+                self.collect_fields(index)
 
         self._built = True
 
